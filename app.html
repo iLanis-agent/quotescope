@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QuoteScope - contractor bids, finally comparable</title>
+<style>
+  :root { --ink:#22282e; --muted:#717a83; --accent:#0f766e; --accent-dk:#0b5b55; --card:#ffffff; --bg:#f4f7f7; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--ink); }
+  .wrap { max-width:760px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:28px; margin:0 0 6px; }
+  .tag { color:var(--muted); margin:0 0 20px; line-height:1.45; }
+  .card { background:var(--card); border:1px solid #d9e3e3; border-radius:14px; padding:18px; margin-bottom:14px; box-shadow:0 1px 3px rgba(0,0,0,.04); }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; }
+  label { display:block; font-size:12px; color:var(--muted); margin-bottom:4px; }
+  input { padding:9px 10px; border:1px solid #c8d5d5; border-radius:8px; font-size:15px; background:#fff; }
+  input[type=text] { width:190px; }
+  input[type=number] { width:110px; }
+  button { padding:10px 16px; border:0; border-radius:8px; background:var(--accent); color:#fff; font-size:15px; cursor:pointer; }
+  button:hover { background:var(--accent-dk); }
+  table { width:100%; border-collapse:collapse; font-size:15px; }
+  th, td { padding:9px 8px; text-align:left; border-bottom:1px solid #e4ecec; }
+  th { font-size:12px; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.03em; }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  td input { width:100px; text-align:right; padding:6px 8px; }
+  .miss { color:#8f3a33; font-size:13px; }
+  .flag { display:inline-block; background:#f6ecd2; color:#8a6a14; border-radius:6px; font-size:12px; padding:2px 8px; margin-left:6px; }
+  .summary { display:flex; gap:12px; flex-wrap:wrap; margin-top:14px; }
+  .sumcard { flex:1; min-width:150px; border:1px solid #d9e3e3; border-radius:10px; padding:12px 14px; background:#fbfdfd; }
+  .sumcard .nm { font-weight:700; margin-bottom:4px; }
+  .sumcard .q { font-size:22px; font-weight:700; }
+  .sumcard .c { color:var(--muted); font-size:13px; margin-top:2px; }
+  .sumcard.best { border-color:var(--accent); background:#eef7f6; }
+  .sumcard.best .nm::after { content:' - cleanest bid'; color:var(--accent-dk); font-size:12px; font-weight:700; }
+  .hidden { display:none; }
+  .empty { color:var(--muted); text-align:center; padding:16px 0; font-size:15px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>QuoteScope</h1>
+  <p class="tag">Three contractors, three totally different quotes - on purpose. QuoteScope lines them up item by item, flags what each one quietly left out, and prices the gaps at the worst competitor rate so you compare real totals, not teaser totals.</p>
+
+  <div class="card">
+    <div class="row">
+      <div><label for="item">Scope item (same list for every bid)</label><input type="text" id="item" placeholder="Demolition"></div>
+      <button id="addItem">Add item</button>
+      <div style="width:12px"></div>
+      <div><label for="bidname">Contractor</label><input type="text" id="bidname" placeholder="BuildRight Co"></div>
+      <button id="addBid" class="ghost" style="background:#e3edec;color:var(--ink)">Add bid</button>
+    </div>
+  </div>
+
+  <div class="card hidden" id="gridCard">
+    <table id="grid"><thead></thead><tbody></tbody></table>
+  </div>
+
+  <div id="summary"></div>
+  <div class="empty" id="empty">Add at least one scope item and two bids to see the comparison.</div>
+</div>
+<script src="engine.js"></script>
+<script>
+(function(){
+  var E = QuoteScopeEngine;
+  var KEY = 'quotescope.v1';
+  var st = {scope:[], bids:[]};
+  try { var s = JSON.parse(localStorage.getItem(KEY) || 'null'); if (s && s.scope && s.bids) st = s; } catch(e){}
+  function save(){ try { localStorage.setItem(KEY, JSON.stringify(st)); } catch(e){} }
+  function $(id){ return document.getElementById(id); }
+  function esc(s){ var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+  function render(){
+    var has = st.scope.length > 0 && st.bids.length >= 1;
+    $('gridCard').classList.toggle('hidden', !has);
+    $('empty').classList.toggle('hidden', st.scope.length > 0 && st.bids.length >= 2);
+    if (!has){ $('summary').innerHTML=''; return; }
+    var thead = '<tr><th>Scope item</th>' + st.bids.map(function(b){ return '<th>' + esc(b.name) + '</th>'; }).join('') + '</tr>';
+    var rows = '';
+    st.scope.forEach(function(it){
+      rows += '<tr><td>' + esc(it.desc) + '</td>' + st.bids.map(function(b, bi){
+        var v = b.prices[it.key];
+        return '<td class="num"><input type="number" min="0" step="50" data-item="' + it.key + '" data-bid="' + bi + '" value="' + (typeof v === 'number' ? v : '') + '" placeholder="missing"></td>';
+      }).join('') + '</tr>';
+    });
+    $('grid').querySelector('thead').innerHTML = thead;
+    $('grid').querySelector('tbody').innerHTML = rows;
+
+    var sums = E.summarize(st.bids, st.scope);
+    var flags = E.outliers(st.bids, st.scope);
+    var v = E.verdict(sums);
+    var html = '<div class="summary">';
+    sums.forEach(function(s){
+      var best = v && v.clean && s.name === v.name;
+      html += '<div class="sumcard' + (best ? ' best' : '') + '">' +
+        '<div class="nm">' + esc(s.name) + '</div>' +
+        '<div class="q">' + E.money(s.quoted) + '</div>' +
+        '<div class="c">' + (s.missing.length ? 'missing: <span class="miss">' + esc(s.missing.join(', ')) + '</span> - worst-case total ' + E.money(s.complete) : 'covers the full scope') + '</div>' +
+      '</div>';
+    });
+    html += '</div>';
+    if (flags.length){
+      html += '<div class="card" style="margin-top:14px"><b>Outlier line items</b><div style="margin-top:6px">' +
+        flags.map(function(f){ return '<div>' + esc(f.bid) + ' charges ' + E.money(f.price) + ' for ' + esc(f.item) + ' <span class="flag">' + Math.round(f.price / f.lowest * 10) / 10 + 'x the lowest bid</span></div>'; }).join('') +
+      '</div></div>';
+    }
+    $('summary').innerHTML = html;
+  }
+
+  $('addItem').addEventListener('click', function(){
+    var d = $('item').value;
+    var k = E.normKey(d);
+    if (!k || st.scope.some(function(it){ return it.key === k; })) return;
+    st.scope.push({key:k, desc:E.display(d)});
+    $('item').value = '';
+    save(); render();
+  });
+  $('item').addEventListener('keydown', function(ev){ if (ev.key === 'Enter') $('addItem').click(); });
+
+  $('addBid').addEventListener('click', function(){
+    var n = $('bidname').value.trim();
+    if (!n || st.bids.some(function(b){ return b.name.toLowerCase() === n.toLowerCase(); })) return;
+    st.bids.push({name:n, prices:{}});
+    $('bidname').value = '';
+    save(); render();
+  });
+  $('bidname').addEventListener('keydown', function(ev){ if (ev.key === 'Enter') $('addBid').click(); });
+
+  $('grid').addEventListener('change', function(ev){
+    var inp = ev.target.closest('input'); if (!inp) return;
+    var bi = parseInt(inp.getAttribute('data-bid'), 10);
+    var k = inp.getAttribute('data-item');
+    var val = inp.value.trim();
+    if (val === '') delete st.bids[bi].prices[k];
+    else { var n = parseFloat(val); if (isFinite(n) && n >= 0) st.bids[bi].prices[k] = n; }
+    save(); render();
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
